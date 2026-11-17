@@ -1,0 +1,17 @@
+kit/
+CLAUDE.md
+start-clean.ps1
+*.tar.gz
+*keypair*.json
+wallet.json
+out/
+.env
+rec.ps1
+NEXT.md
+.makefun-local/
+node_modules/
+*.log
+shots-raw/
+*.tmp
+.DS_Store
+Thumbs.db
