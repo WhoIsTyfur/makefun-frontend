@@ -37,17 +37,17 @@ export async function getJSON(path, maxAge = 20e3) {
 
 // The live board: one request for every open bounty, reused by the bounty page header and the rail.
 export const liveBoard = () => getJSON('/competitions?limit=100&status=open');
-export const bountyOf = (slug) => getJSON(`/competitions/${encodeURIComponent(slug)}`);
+export const bountyOf = (slug) => getJSON(`/competitions/${encodeURIComponent(slug)}?submissions=summary`);
 // rows=first: 10 whole rows plus slim rows for the rest (a fifth of the bytes), made one list for the virtual view.
-const slim = new WeakMap();
+const withAllRows = new WeakMap();
 export async function leaderboardOf(slug) {
   const lb = await getJSON(`/competitions/${encodeURIComponent(slug)}/leaderboard?rows=first`);
-  if (!slim.has(lb)) {
+  if (!withAllRows.has(lb)) {
     const k = lb.rank_key, rest = (lb.rest ?? []).map((r) => ({ ...r, values: { [k]: r.value, [k + '_low']: r.interval?.low, [k + '_high']: r.interval?.high } }));
-    slim.set(lb, { ...lb, entries: [...(lb.entries ?? []), ...rest] });
+    withAllRows.set(lb, { ...lb, entries: [...(lb.entries ?? []), ...rest] });
   }
   // The same answer gives the same object, so an unchanged refresh repaints nothing.
-  return slim.get(lb);
+  return withAllRows.get(lb);
 }
 export const profileOf = (handle) => getJSON(`/profiles/${encodeURIComponent(handle)}`);
 

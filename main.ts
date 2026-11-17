@@ -8,6 +8,10 @@ import { buildDossier } from './vendor/makefun-frontend.ts';
 const repo = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR || '/output';
 
+// The gate wants exactly 3 PNG or JPEG screenshots (the first by name is the cover): refuse early, with a clear message.
+const shots = readdirSync(join(repo, 'screenshots')).filter((f) => !f.startsWith('.') && /\.(png|jpe?g)$/i.test(f)).sort();
+if (shots.length !== 3) throw new Error(`screenshots/ must hold exactly 3 images, found ${shots.length}: ${shots.join(', ')}`);
+
 mkdirSync(out, { recursive: true });
 for (const dir of ['app', 'screenshots']) cpSync(join(repo, dir), join(out, dir), { recursive: true });
 
