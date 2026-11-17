@@ -1,25 +1,32 @@
 // Unofficial make.fun client: one shell, four surfaces, each view a module loaded by a literal import().
+import { esc, timeLeft } from './views/util.js';
 // Routes: #/  #/bounty/<slug>  #/bounty/<slug>/leaderboard  #/u/<handle>  (?u=<handle> picks the profile panel)
 export const VIEWS = { board: () => import('./views/board.js'), bounty: () => import('./views/bounty.js'), leaderboard: () => import('./views/leaderboard.js'), profile: () => import('./views/profile.js') };
 export const API = 'https://make.fun/api';
 // One copy of each API answer (url -> { etag, text, data, at }), and the requests in flight that panes share.
 export const cache = new Map();
 const inflight = new Map();
-export const net = { requests: 0, revalidated: 0, cached: 0 };
+export const net = { requests: 0, revalidated: 0, unchanged: 0, cached: 0 };
 
-// GET with an in-memory cache: fresh answers are reused, stale ones revalidated with If-None-Match (304, no body).
-export async function getJSON(path, maxAge = 60e3) {
+// GET with an in-memory cache: fresh answers are reused; stale ones are revalidated by ETag. make.fun's 304s carry no
+// CORS header, so a script-set If-None-Match fails cross-origin: cache 'no-cache' has the browser send If-None-Match
+// from its HTTP cache and merge the 304 into the stored answer, which does carry it.
+export async function getJSON(path, maxAge = 20e3) {
   const url = API + path, hit = cache.get(url);
   if (hit && Date.now() - hit.at < maxAge) return net.cached++, hit.data;
   if (inflight.has(url)) return inflight.get(url);
   const job = (async () => {
     net.requests++;
-    const res = await fetch(url, { cache: 'no-store', headers: hit?.etag ? { 'If-None-Match': hit.etag } : {} });
-    if (res.status === 304 && hit) return net.revalidated++, (hit.at = Date.now()), hit.data;
+    if (hit) net.revalidated++;
+    const res = await fetch(url, { cache: 'no-cache' }).catch((err) => {
+      if (hit) return null; // offline or blocked: keep showing the last good answer
+      throw err;
+    });
+    if (!res) return hit.data;
     if (!res.ok) throw new Error(`${res.status} on ${path}`);
     const text = await res.text(), etag = res.headers.get('ETag');
     // ETags turn every minute even when nothing changed: an identical body keeps the old object, so views skip work.
-    if (hit && hit.text === text) return Object.assign(hit, { etag, at: Date.now() }).data;
+    if (hit && hit.text === text) return net.unchanged++, Object.assign(hit, { etag, at: Date.now() }).data;
     const data = JSON.parse(text);
     cache.set(url, { etag, text, data, at: Date.now() });
     return data;
@@ -97,43 +104,24 @@ export function virtualRows(viewport, rowHeight, draw) {
   };
 }
 
-// Formatting shared by every view.
-export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-export const usd = (v) => (v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: Number(v) % 1 ? 2 : 0, maximumFractionDigits: 2 }));
-export const fee = (c) => (c.entryFeeUsd == null || Number(c.entryFeeUsd) === 0 ? 'Free' : usd(c.entryFeeUsd));
-export const num = (n) => Number(n ?? 0).toLocaleString('en-US');
-export const takesEntries = (c, now = Date.now()) => c.status === 'open' && Date.parse(c.deadline) > now;
-export function timeLeft(deadline, now = Date.now()) {
-  const ms = Date.parse(deadline) - now, a = Math.abs(ms), m = Math.floor(a / 6e4), h = Math.floor(m / 60), d = Math.floor(h / 24);
-  const span = d >= 2 ? `${d}d ${h % 24}h` : h >= 1 ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m ${String(Math.floor(a / 1e3) % 60).padStart(2, '0')}s`;
-  return ms > 0 ? span : `closed ${span} ago`;
-}
-export const stateOf = (c) => (takesEntries(c) ? ['open', 'Taking entries'] : c.status === 'open' ? ['judging', 'Closed · judging'] : [c.status, c.status[0].toUpperCase() + c.status.slice(1)]);
-export const date = (iso) => (iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false }) + ' UTC' : '—');
-export const avatar = (url, size = 40) => (url ? `<img class="av" width="${size}" height="${size}" alt="" crossorigin="anonymous" src="${esc(new URL(url, 'https://make.fun'))}">` : `<span class="av av-none" style="width:${size}px;height:${size}px"></span>`);
-export function scoreText(lb, e) {
-  const col = lb.columns?.find((c) => c.key === lb.rank_key);
-  const v = e.values?.[lb.rank_key];
-  if (v == null) return '—';
-  return /micro/.test(col?.source ?? '') ? (v / 1e4).toFixed(1) + '%' : e.display?.[lb.rank_key] ?? String(v);
-}
-
 // The shell: built once; each route only fills or reshapes its four panes.
 const app = document.getElementById('app');
 app.innerHTML = `<header class="top"><a class="brand" href="#/"><b>fun</b>board</a>
 <nav class="tabs" aria-label="Surfaces"><a data-tab="board" href="#/">Board</a><a data-tab="bounty">Bounty</a><a data-tab="leaderboard">Leaderboard</a><a data-tab="profile">Profile</a></nav>
 <code class="addr" id="addr"></code><span class="net" id="net"></span></header>
 <div class="grid"><section class="pane" id="p-board" aria-label="Bounty board"></section><section class="pane" id="p-bounty" aria-label="Bounty page"></section>
-<section class="pane" id="p-lb" aria-label="Leaderboard"></section><section class="pane" id="p-profile" aria-label="Profile"></section></div>`;
+<section class="pane" id="p-lb" aria-label="Leaderboard"></section><section class="pane" id="p-profile" aria-label="Profile"></section></div>
+<footer class="foot" id="foot"></footer>`;
 const style = document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: '/views/theme.css' }));
 const styled = new Promise((ok) => ['load', 'error'].forEach((t) => style.addEventListener(t, ok)));
 export const panes = { board: app.querySelector('#p-board'), bounty: app.querySelector('#p-bounty'), lb: app.querySelector('#p-lb'), profile: app.querySelector('#p-profile') };
 export const state = { route: null, slug: null, handle: null };
 
 // One render per hash change: load the four view modules once, then let each fill its pane for the route.
-let seq = 0;
+let seq = 0, viewBase = { ...net };
 async function render() {
   const run = ++seq, route = parseRoute();
+  viewBase = { ...net };
   window.__shotReady = false;
   app.dataset.view = route.view;
   document.getElementById('addr').textContent = location.hash || '#/';
@@ -148,7 +136,7 @@ async function render() {
     if (run !== seq) return;
     const handle = route.handle ?? lb?.entries?.[0]?.handle ?? null;
     state.handle = handle;
-    leaderboard.show(panes.lb, slug, lb, handle, route.view === 'leaderboard');
+    leaderboard.show(panes.lb, slug, lb, handle, route.view === 'leaderboard', list.items.find((c) => c.slug === slug)?.rewardsNow);
     await profile.show(panes.profile, handle, route.view === 'profile', slug);
     if (run !== seq) return;
     setTabs(slug, handle);
@@ -167,8 +155,12 @@ function setTabs(slug, handle) {
   }
 }
 
+// What this view cost, measured: requests sent, answers revalidated (304) and answers served from memory.
 export function showNet() {
-  document.getElementById('net').textContent = `${net.requests} API requests · ${net.revalidated} revalidated (304) · ${net.cached} served from memory`;
+  const d = (k) => net[k] - viewBase[k], at = new Date().toISOString().slice(11, 19);
+  document.getElementById('net').innerHTML = `<i class="dot"></i>this view: ${d('requests')} API request${d('requests') === 1 ? '' : 's'} · ${d('cached')} from memory${d('revalidated') ? ` · ${d('revalidated')} revalidated, ${d('unchanged')} unchanged` : ''} · ${at} UTC`;
+  const rendered = document.getElementById('lb-view')?.dataset.rendered;
+  document.getElementById('foot').textContent = `First load: index.html alone (one inline import) · 4 views by import() · ${net.requests} API requests this session, ${net.revalidated} revalidated by ETag${net.unchanged ? ` (${net.unchanged} unchanged, not repainted)` : ''} · rows patched in place${rendered ? ` · virtual leaderboard: ${rendered}` : ''}`;
 }
 
 // Live: once a minute revalidate what is on screen; unchanged answers return the same object and repaint nothing.

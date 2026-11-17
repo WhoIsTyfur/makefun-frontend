@@ -1,5 +1,6 @@
 // The bounty board: every open bounty with its live pot, entry fee, time left and entries, patched in place.
-import { esc, usd, fee, num, timeLeft, stateOf, takesEntries, patchRows } from '../core.js';
+import { patchRows } from '../core.js';
+import { esc, usd, fee, num, timeLeft, stateOf, takesEntries } from './util.js';
 
 // Taking entries first, soonest deadline first; then the ones closed and being judged, latest first.
 export function order(items, now = Date.now()) {
@@ -81,5 +82,3 @@ export function show(pane, items, selected) {
   paint();
   pane.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest' });
 }
-
-export const describe = (c) => `${esc(c.title)}: ${usd(c.potUsd)} pot, ${fee(c)} entry, ${timeLeft(c.deadline)}`;

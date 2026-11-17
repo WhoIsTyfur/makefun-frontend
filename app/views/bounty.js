@@ -1,6 +1,7 @@
 // A bounty's page: summary, live pot, fee, time left, rewards table, dates, status, description and rules.
 // The header paints at once from the board's own item; one request for the detail adds the rules and dates.
-import { esc, usd, fee, num, timeLeft, stateOf, date, bountyOf } from '../core.js';
+import { bountyOf } from '../core.js';
+import { esc, usd, fee, num, timeLeft, stateOf, date } from './util.js';
 
 // A small Markdown subset (headings, lists, paragraphs, `code`, **bold**, links), escaped before it is shaped.
 export function md(text = '') {
@@ -29,8 +30,15 @@ export function rewardsTable(c) {
   const rows = c.rewardsNow?.length ? c.rewardsNow : Object.entries(c.rewards ?? {}).map(([p, v]) => ({ place: +p, amountUsd: v, baseUsd: v, feeShareUsd: 0 }));
   if (!rows.length) return '<p class="muted">No rewards table published.</p>';
   const fees = rows.some((r) => Number(r.feeShareUsd) > 0);
-  return `<table class="prizes"><thead><tr><th>Place</th><th>Prize now</th>${fees ? '<th>Base + fee share</th>' : ''}</tr></thead><tbody>${rows
-    .map((r) => `<tr${r.place <= 3 ? ' class="top3"' : ''}><td>${ord(r.place)}</td><td class="num"><b>${usd(r.amountUsd)}</b></td>${fees ? `<td class="num muted">${usd(r.baseUsd)} + ${usd(r.feeShareUsd)}</td>` : ''}</tr>`)
+  // Consecutive places paying the same become one row: "4th–10th, $29.70 each".
+  const groups = [];
+  for (const r of [...rows].sort((a, b) => a.place - b.place)) {
+    const g = groups.at(-1);
+    if (g && r.place > 3 && g.first > 3 && g.r.amountUsd === r.amountUsd && g.r.baseUsd === r.baseUsd && g.last === r.place - 1) g.last = r.place;
+    else groups.push({ first: r.place, last: r.place, r });
+  }
+  return `<table class="prizes"><thead><tr><th>Place</th><th class="num">Prize now</th>${fees ? '<th class="num">Base + fees</th>' : ''}</tr></thead><tbody>${groups
+    .map(({ first, last, r }) => `<tr${first <= 3 ? ' class="top3"' : ''}><td>${first === last ? ord(first) : `${ord(first)}–${ord(last)}`}</td><td class="num"><b>${usd(r.amountUsd)}</b>${first === last ? '' : '<small> each</small>'}</td>${fees ? `<td class="num muted">${usd(r.baseUsd)} + ${usd(r.feeShareUsd)}</td>` : ''}</tr>`)
     .join('')}</tbody></table>`;
 }
 
@@ -40,7 +48,7 @@ function header(c, slug) {
 <h1>${esc(c.title)}</h1><p class="lede">${esc(c.summary ?? '')}</p></div>
 <div class="stats"><div class="stat pot"><span>Live pot</span><b>${usd(c.potUsd ?? c.rewardAmount)}</b><small>${usd(c.rewardAmount)}${Number(c.entryFeesUsd) > 0 ? ` + ${usd(c.entryFeesUsd)} fees` : ' reward'}</small></div>
 <div class="stat"><span>Entry fee</span><b>${fee(c)}</b><small>${c.entryFeePayers ? `${num(c.entryFeePayers)} paid` : 'per account'}</small></div>
-<div class="stat"><span>Time left</span><b data-deadline="${esc(c.deadline)}">${timeLeft(c.deadline)}</b><small>ends ${date(c.deadline).replace(',', '').replace(' UTC', '')}</small></div>
+<div class="stat"><span>Time left</span><b data-deadline="${esc(c.deadline)}">${timeLeft(c.deadline)}</b><small>${date(c.deadline).replace(',', '').replace(' UTC', '')} UTC</small></div>
 <div class="stat"><span>Entries</span><b>${num(c.submissionCount)}</b><small><a href="#/bounty/${encodeURIComponent(slug)}/leaderboard">leaderboard →</a></small></div></div>`;
 }
 
